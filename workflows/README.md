@@ -13,20 +13,22 @@ priority, and records it in Google Sheets.
 > not the deployed definition.
 
 > [!WARNING]
-> **This directory currently contains a private, instance-specific workflow
-> export** ([`ai-lead-tracker.fixed.json`](ai-lead-tracker.fixed.json)) that has
-> **not** been sanitised. It embeds a Google Sheets spreadsheet URL/ID, an n8n
-> OAuth credential reference, the workflow id, and an instance id. See
-> [Security and privacy](#security-and-privacy) before committing or sharing it.
-> Those concrete values are intentionally **not** reproduced in this document.
+> **A private, instance-specific workflow export exists but is not published.**
+> Any exported workflow JSON kept in this directory has **not** been sanitised
+> and embeds a Google Sheets spreadsheet URL/ID, an n8n OAuth credential
+> reference, the workflow id, and an instance id. It is intentionally excluded
+> from version control (see [`../.gitignore`](../.gitignore)) and is **not**
+> linked or reproduced here. See [Security and privacy](#security-and-privacy)
+> before committing, sharing, or re-exporting it.
 
 ---
 
 ## Workflow architecture
 
-The structure below reflects the exported workflow in
-[`ai-lead-tracker.fixed.json`](ai-lead-tracker.fixed.json). Webhook **paths**,
-**ifs**, and node names are quoted verbatim from that export.
+The structure below was transcribed from an inspection of a workflow export
+produced by the running n8n instance. That export is private and is **not
+published in this repository**; webhook **paths**, **ifs**, and node names are
+quoted verbatim from it.
 
 ```mermaid
 flowchart TD
@@ -307,8 +309,8 @@ Be precise about what is actually proven, and by what.
 - Workflow structure, node names, node types, the `POST ai-lead` webhook with
   `responseMode: responseNode`, the HTTP Request URL/body/timeout, the priority
   condition (`data.priority == "high"`), the Sheets columns and match column,
-  and the `400`/`500` responder bodies — all cross-checked against
-  [`ai-lead-tracker.fixed.json`](ai-lead-tracker.fixed.json).
+  and the `400`/`500` responder bodies — all cross-checked against a private
+  workflow export inspected locally (not published in this repository).
 - The Express API contract ([`../src/app.ts`](../src/app.ts),
   [`../src/services/lead-analyzer.ts`](../src/services/lead-analyzer.ts)) that
   the workflow consumes.
@@ -332,6 +334,9 @@ Be precise about what is actually proven, and by what.
 
 - There is **no automated test for the n8n workflow itself** (no end-to-end
   webhook → API → Sheets coverage in this repository).
+- The private workflow export is **not** committed or linked here, so the
+  structural claims above cannot be re-verified from a public checkout; they
+  rely on the local inspection described at the top of this section.
 - Google Sheets append/update and deduplication were **manually tested** in the
   live instance; the exact current dedupe/overwrite results are **unverified**
   here.
@@ -342,12 +347,13 @@ Be precise about what is actually proven, and by what.
 
 ## Security and privacy
 
-- **Instance-specific data in the export (present, not sanitised):**
-  [`ai-lead-tracker.fixed.json`](ai-lead-tracker.fixed.json) contains a Google
-  Sheets spreadsheet URL/ID, a Google Sheets OAuth2 credential reference
-  (credential id + account name), the n8n `webhookId`, the workflow `id`, and a
-  `meta.instanceId`. The concrete values are **not** reproduced in this document.
-  Treat the file as private and sanitise it before committing or publishing.
+- **Instance-specific data in the export (present, not sanitised):** a private
+  workflow export inspected locally contains a Google Sheets spreadsheet
+  URL/ID, a Google Sheets OAuth2 credential reference (credential id + account
+  name), the n8n `webhookId`, the workflow `id`, and a `meta.instanceId`. That
+  file is **not** published (see [`../.gitignore`](../.gitignore)); the concrete
+  values are **not** reproduced in this document. Treat any such export as
+  private and sanitise it before committing or publishing.
 - **The API has no authentication.** Anyone who can reach the port can submit
   lead messages. The existing design relies on network-level access control
   (firewall / reverse proxy). See [`../README.md`](../README.md) → *Security &
