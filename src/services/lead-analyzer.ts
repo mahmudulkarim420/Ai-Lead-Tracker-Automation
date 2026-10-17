@@ -206,28 +206,29 @@ async function analyzeWithGemini(customerMessage: string): Promise<Lead> {
         responseMimeType: "application/json",
       },
     });
+
+    const rawText = response.text;
+    if (rawText === undefined || rawText.trim() === "") {
+      throw new Error("Gemini returned an empty response");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      throw new Error("Gemini returned malformed JSON");
+    }
+
+    return LeadSchema.parse(parsed);
   } catch (err: unknown) {
     if (isProviderTimeoutError(err)) {
       throw new AiTimeoutError("Gemini", AI_TIMEOUT_MS);
     }
-    // Never surface raw provider errors (which may embed request details or
-    // credentials) to callers; keep the original as an unlogged `cause`.
+    // Log the real error to console so it appears in Render logs
+    console.error("Gemini Provider Error:", err);
+    // Never surface raw provider errors to callers
     throw new Error("Gemini request failed", { cause: err });
   }
-
-  const rawText = response.text;
-  if (rawText === undefined || rawText.trim() === "") {
-    throw new Error("Gemini returned an empty response");
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    throw new Error("Gemini returned malformed JSON");
-  }
-
-  return LeadSchema.parse(parsed);
 }
 
 async function analyzeWithOllama(customerMessage: string): Promise<Lead> {
