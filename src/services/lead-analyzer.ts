@@ -6,18 +6,23 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 // Provider / environment configuration
 // ---------------------------------------------------------------------------
-// AI_PROVIDER selects the backend: "ollama" (default, local) or "gemini"
-// (Google Gemini Developer API). Any other value is rejected at startup so a
-// typo is never silently ignored.
-type AiProvider = "ollama" | "gemini";
+// AI_PROVIDER selects the backend: "ollama" (default, local), "gemini"
+// (Google Gemini Developer API), or "agentrouter" (API gateway).
+// Any other value is rejected at startup so a typo is never silently ignored.
+type AiProvider = "ollama" | "gemini" | "agentrouter";
 
 function readProvider(): AiProvider {
   const raw = process.env["AI_PROVIDER"];
   if (raw === undefined || raw.trim() === "") return "ollama";
   const normalized = raw.trim().toLowerCase();
-  if (normalized === "ollama" || normalized === "gemini") return normalized;
+  if (
+    normalized === "ollama" ||
+    normalized === "gemini" ||
+    normalized === "agentrouter"
+  )
+    return normalized;
   throw new Error(
-    `Invalid AI_PROVIDER value "${raw}": must be "ollama" or "gemini".`,
+    `Invalid AI_PROVIDER value "${raw}": must be "ollama", "gemini", or "agentrouter".`,
   );
 }
 
@@ -72,6 +77,13 @@ const AI_TIMEOUT_MS = parseTimeoutMsEnv(
 const GEMINI_MODEL = (() => {
   const raw = process.env["GEMINI_MODEL"];
   if (raw === undefined || raw.trim() === "") return "gemini-flash-latest";
+  return raw.trim();
+})();
+
+// AGENTROUTER_MODEL: model ID for the AgentRouter provider.
+const AGENTROUTER_MODEL = (() => {
+  const raw = process.env["AGENTROUTER_MODEL"];
+  if (raw === undefined || raw.trim() === "") return "gemini-2.0-flash-exp";
   return raw.trim();
 })();
 
@@ -157,6 +169,16 @@ function requireGeminiApiKey(): string {
   return key;
 }
 
+function requireAgentRouterApiKey(): string {
+  const key = process.env["AGENTROUTER_API_KEY"];
+  if (key === undefined || key.trim() === "") {
+    throw new Error(
+      "AGENTROUTER_API_KEY must be set when AI_PROVIDER=agentrouter.",
+    );
+  }
+  return key;
+}
+
 let geminiClient: GoogleGenAI | undefined;
 
 function getGeminiClient(): GoogleGenAI {
@@ -187,6 +209,61 @@ function isProviderTimeoutError(err: unknown): boolean {
     name === "APIConnectionTimeoutError" ||
     status === 504
   );
+}
+
+async function analyzeWithAgentRouter(customerMessage: string): Promise<Lead> {
+  const apiKey = requireAgentRouterApiKey();
+  const url = "https://agentrouter.org/v1/chat/completions";
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: AGENTROUTER_MODEL,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: customerMessage },
+        ],
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+    });
+  } catch (err: unknown) {
+    if (isProviderTimeoutError(err)) {
+      throw new AiTimeoutError("AgentRouter", AI_TIMEOUT_MS);
+    }
+    console.error("AgentRouter Provider Error:", err);
+    throw new Error("AgentRouter request failed", { cause: err });
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("AgentRouter Error Response:", errorText);
+    throw new Error(`AgentRouter failed with status ${response.status}`);
+  }
+
+  const data = (await response.json()) as {
+    choices: Array<{ message: { content: string } }>;
+  };
+  const rawText = data.choices[0]?.message.content;
+
+  if (rawText === undefined || rawText.trim() === "") {
+    throw new Error("AgentRouter returned an empty response");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new Error("AgentRouter returned malformed JSON");
+  }
+
+  return LeadSchema.parse(parsed);
 }
 
 async function analyzeWithGemini(customerMessage: string): Promise<Lead> {
@@ -268,6 +345,10 @@ export async function analyzeLead(customerMessage: string): Promise<Lead> {
 
   if (AI_PROVIDER === "gemini") {
     return analyzeWithGemini(customerMessage);
+  }
+
+  if (AI_PROVIDER === "agentrouter") {
+    return analyzeWithAgentRouter(customerMessage);
   }
 
   return analyzeWithOllama(customerMessage);
