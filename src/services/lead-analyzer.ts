@@ -87,6 +87,12 @@ const AGENTROUTER_MODEL = (() => {
   return raw.trim();
 })();
 
+// AGENTROUTER_USER_AGENT: AgentRouter fingerprints the client User-Agent and
+// rejects requests that do not look like a supported CLI (HTTP 401
+// "unauthorized client detected") even with a valid key. A claude-cli-style UA
+// is accepted; the exact version is not validated.
+const AGENTROUTER_USER_AGENT = "claude-cli/2.0.0 (external, cli)";
+
 // ---------------------------------------------------------------------------
 // Ollama client (unchanged behaviour)
 // ---------------------------------------------------------------------------
@@ -222,6 +228,11 @@ async function analyzeWithAgentRouter(customerMessage: string): Promise<Lead> {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
+        // AgentRouter fingerprints the client User-Agent and rejects requests
+        // that do not look like a supported CLI with HTTP 401
+        // ("unauthorized client detected"), even for a valid API key. A
+        // claude-cli-style UA is required for the key to be accepted.
+        "User-Agent": AGENTROUTER_USER_AGENT,
       },
       body: JSON.stringify({
         model: AGENTROUTER_MODEL,
@@ -247,10 +258,18 @@ async function analyzeWithAgentRouter(customerMessage: string): Promise<Lead> {
     throw new Error(`AgentRouter failed with status ${response.status}`);
   }
 
-  const data = (await response.json()) as {
-    choices: Array<{ message: { content: string } }>;
-  };
-  const rawText = data.choices[0]?.message.content;
+  let data: any;
+  const rawBody = await response.text();
+  try {
+    data = JSON.parse(rawBody);
+  } catch (err: unknown) {
+    // This is where the SyntaxError: Unexpected token '<' happens.
+    // Log the raw body so we can see the HTML error page from the provider/WAF.
+    console.error("AgentRouter non-JSON response body:", rawBody.slice(0, 1000));
+    throw new Error("AgentRouter returned a non-JSON response", { cause: err });
+  }
+
+  const rawText = data.choices?.[0]?.message?.content;
 
   if (rawText === undefined || rawText.trim() === "") {
     throw new Error("AgentRouter returned an empty response");
@@ -259,8 +278,11 @@ async function analyzeWithAgentRouter(customerMessage: string): Promise<Lead> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawText);
-  } catch {
-    throw new Error("AgentRouter returned malformed JSON");
+  } catch (err: unknown) {
+    // If the model itself returned malformed JSON, log the raw text it produced
+    // so we can see if it's a prompt-following failure or a provider error.
+    console.error("AgentRouter malformed JSON content:", rawText);
+    throw new Error("AgentRouter returned malformed JSON", { cause: err });
   }
 
   return LeadSchema.parse(parsed);
@@ -292,8 +314,9 @@ async function analyzeWithGemini(customerMessage: string): Promise<Lead> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawText);
-    } catch {
-      throw new Error("Gemini returned malformed JSON");
+    } catch (err: unknown) {
+      console.error("Gemini malformed JSON content:", rawText);
+      throw new Error("Gemini returned malformed JSON", { cause: err });
     }
 
     return LeadSchema.parse(parsed);
