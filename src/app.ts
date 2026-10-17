@@ -1,7 +1,7 @@
 
 import express, { type ErrorRequestHandler } from "express";
 import { z } from "zod";
-import { analyzeLead, OllamaTimeoutError } from "./services/lead-analyzer.js";
+import { AiTimeoutError, analyzeLead } from "./services/lead-analyzer.js";
 import { apiRateLimiter, configureTrustProxy } from "./middleware/rate-limit.js";
 import { requestContext } from "./middleware/request-context.js";
 import { errorInfo, log } from "./lib/logger.js";
@@ -49,10 +49,14 @@ app.post("/api/leads/analyze", apiRateLimiter, async (req, res) => {
     // Structured, categorised logging. errorInfo() emits only name/message/
     // category – never a stack trace or the raw thrown object – and the log
     // line is correlated via the active request id.
-    if (error instanceof OllamaTimeoutError) {
+    // AiTimeoutError is provider-neutral and also covers OllamaTimeoutError,
+    // which extends it. The logger's only valid timeout category today is
+    // "ollama_timeout" (its ErrorCategory union has no neutral value), so it
+    // is retained to keep categorised timeout logging intact.
+    if (error instanceof AiTimeoutError) {
       log().error(
         { errorDetails: errorInfo(error, "ollama_timeout") },
-        "ollama request timed out",
+        "ai provider request timed out",
       );
       res.status(504).json({
         error: "Lead analysis timed out",
