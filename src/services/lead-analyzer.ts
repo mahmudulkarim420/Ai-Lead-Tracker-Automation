@@ -59,11 +59,11 @@ const OLLAMA_TIMEOUT_MS = (() => {
   return parsed;
 })();
 
-// AI_TIMEOUT_MS: how long to wait for a Gemini response. Default 30 000 ms.
+// AI_TIMEOUT_MS: how long to wait for a Gemini response. Default 60 000 ms.
 const AI_TIMEOUT_MS = parseTimeoutMsEnv(
   process.env["AI_TIMEOUT_MS"],
   "AI_TIMEOUT_MS",
-  30_000,
+  60_000,
 );
 
 // GEMINI_MODEL: model ID for the Gemini provider. No model ID is hardcoded as
@@ -172,16 +172,20 @@ function getGeminiClient(): GoogleGenAI {
 
 // The Gemini SDK surfaces a client-side timeout as an error named
 // "APIConnectionTimeoutError" (an ApiError subclass); a raw AbortSignal
-// timeout surfaces as a DOMException named "TimeoutError". Classify both
-// without depending on non-exported SDK classes.
+// timeout surfaces as a DOMException named "TimeoutError". A server-side
+// timeout (e.g. Google's load balancer) surfaces as an ApiError with status
+// 504 (DEADLINE_EXCEEDED). Classify all three without depending on
+// non-exported SDK classes.
 function isProviderTimeoutError(err: unknown): boolean {
   if (err instanceof DOMException && err.name === "TimeoutError") return true;
   if (typeof err !== "object" || err === null) return false;
   const name = (err as { name?: unknown }).name;
+  const status = (err as { status?: unknown }).status;
   return (
     name === "TimeoutError" ||
     name === "RequestTimeoutError" ||
-    name === "APIConnectionTimeoutError"
+    name === "APIConnectionTimeoutError" ||
+    status === 504
   );
 }
 
