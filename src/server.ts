@@ -2,19 +2,16 @@ import app from "./app.js";
 
 const PORT = Number(process.env["PORT"] ?? 3000);
 
-// Network binding: omitted host → listen on ALL interfaces (0.0.0.0), which is
-// this service's default and is intentionally NOT changed to 127.0.0.1.
-//
-// Rationale: the n8n Docker container reaches the host API through
-// `host.docker.internal:3000` (see docker-compose.yml, extra_hosts →
-// host-gateway). The container connects to the host across the Docker bridge,
-// so it originates from outside the host's loopback interface. An API bound
-// only to 127.0.0.1 would refuse that connection and break the workflow.
+// Network binding: omitted host → listen on ALL interfaces (0.0.0.0). This is
+// the service's default and is intentionally kept: the deployment platform
+// (Render) expects the process to bind to an externally reachable interface and
+// to serve on $PORT.
 //
 // Exposure implication: the port is reachable via every host interface (the
-// LAN, and the public internet if the host firewall allows it). There is no
-// authentication on the endpoints, so operators must restrict access with a
-// host firewall or a reverse proxy when the machine is not fully trusted.
+// LAN, and the public internet if the host firewall allows it). The only route
+// is a health probe, which exposes no data; there is no authentication, so
+// operators should still restrict access with a host firewall or a reverse
+// proxy when the machine is not fully trusted.
 const server = app.listen(PORT, () => {
   console.log(`🚀 AI Integration API  →  http://localhost:${PORT}`);
   console.log(`   Health check        →  http://localhost:${PORT}/health`);

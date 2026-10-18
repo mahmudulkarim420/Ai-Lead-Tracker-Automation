@@ -178,11 +178,11 @@ export function log(): Logger {
 // Safe error serialisation
 // ---------------------------------------------------------------------------
 
-export type ErrorCategory =
-  | "ollama_timeout"
-  | "upstream_failure"
-  | "validation_error"
-  | "unknown";
+// Categories are deliberately generic: this service no longer talks to any AI
+// provider, so provider-specific categories (e.g. timeouts/upstream failures)
+// were removed. `validation_error` covers client-caused 4xx errors, `unknown`
+// everything else.
+export type ErrorCategory = "validation_error" | "unknown";
 
 export interface ErrorInfo {
   name: string;

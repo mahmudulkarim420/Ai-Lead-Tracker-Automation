@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.build.json",
-    "test": "tsx --test src/app.test.ts src/services/lead-analyzer.test.ts src/logging.test.ts src/timeout-cancellation.test.ts"
+    "test": "tsx --test src/app.test.ts src/logging.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,12 +21,8 @@
   },
   "type": "module",
   "dependencies": {
-    "@google/genai": "^2.30.0",
     "express": "^5.3.0",
-    "express-rate-limit": "^8.7.1",
-    "ollama": "^0.6.4",
-    "pino": "^10.4.0",
-    "zod": "^4.6.7"
+    "pino": "^10.4.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

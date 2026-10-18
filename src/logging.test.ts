@@ -5,8 +5,7 @@
  *   - X-Request-ID generation, echoing, and safe validation of inbound ids
  *   - exactly one completion log per request (no duplicates)
  *   - health checks are not logged at the default `info` level
- *   - structured error logging categories for upstream failures
- *   - safe log content: no raw lead message, no secrets, no stack traces
+ *   - safe log content: no secrets and no stack traces
  *   - logger JSON shape + defensive redaction
  *
  * Run: pnpm test
@@ -24,15 +23,6 @@ import type { AddressInfo } from "node:net";
 // Configure env before any import that reads it at module load time.
 // ---------------------------------------------------------------------------
 process.env["LOG_LEVEL"] = "info";
-process.env["RATE_LIMIT_MAX"] = "1000";       // keep the limiter out of the way
-process.env["RATE_LIMIT_WINDOW_MS"] = "60000";
-// Force a deterministic, fast failure of the upstream Ollama call so the error
-// logging path is exercised without needing a real model.
-// NOTE: ollama-js 0.6.x does NOT read OLLAMA_HOST (it hardcodes
-// 127.0.0.1:11434), so instead we shrink the request timeout to 1 ms: any real
-// round-trip – or an immediate connection refusal when Ollama is absent – then
-// fails right away, producing a 504 (timeout) or 502 (connection error).
-process.env["OLLAMA_TIMEOUT_MS"] = "1";
 
 // ---------------------------------------------------------------------------
 // Imports (after env is set)
@@ -221,58 +211,6 @@ describe("Health check logging", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Structured error logging (deterministic upstream failure via closed port)
-// ---------------------------------------------------------------------------
-describe("Structured error logging", () => {
-  it("logs a categorised error and returns the safe error body", async () => {
-    captured = [];
-    const res = await request(port, {
-      method: "POST",
-      path: "/api/leads/analyze",
-      body: { message: "super secret lead message" },
-    });
-
-    // Either the upstream timed out (504 / ollama_timeout) or the connection
-    // failed (502 / upstream_failure); both are handled, safe paths.
-    assert.ok(
-      res.status === 502 || res.status === 504,
-      `expected 502 or 504, got ${res.status}`,
-    );
-    assert.deepEqual(
-      res.body,
-      res.status === 504
-        ? { error: "Lead analysis timed out" }
-        : { error: "Lead analysis failed" },
-    );
-
-    await waitFor(() => captured.some((r) => r["errorDetails"] !== undefined));
-    const errLog = captured.find((r) => r["errorDetails"] !== undefined);
-    assert.ok(errLog, "expected a structured error log");
-
-    const err = errLog["errorDetails"] as Record<string, unknown>;
-    assert.equal(
-      err["category"],
-      res.status === 504 ? "ollama_timeout" : "upstream_failure",
-    );
-    assert.equal(typeof err["name"], "string");
-    assert.equal(typeof err["message"], "string");
-    // The error's own message stays readable (it describes the failure and is
-    // not the raw lead text). Guards against over-eager redaction.
-    assert.notEqual(err["message"], "[REDACTED]");
-    assert.ok(!("stack" in err), "error log must not contain a stack trace");
-
-    // Correlation: the error log carries the same id as the response header.
-    assert.equal(errLog["requestId"], res.headers[REQUEST_ID_HEADER.toLowerCase()]);
-
-    // Safety: the raw lead message must never appear in any emitted log.
-    assert.ok(
-      !JSON.stringify(captured).includes("super secret lead message"),
-      "raw lead message must not be logged",
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Logger unit behaviour
 // ---------------------------------------------------------------------------
 describe("logger configuration & content", () => {
@@ -320,7 +258,7 @@ describe("errorInfo()", () => {
   });
 
   it("respects an explicit category", () => {
-    assert.equal(errorInfo(new Error("boom"), "ollama_timeout").category, "ollama_timeout");
+    assert.equal(errorInfo(new Error("boom"), "validation_error").category, "validation_error");
   });
 
   it("handles a thrown string", () => {

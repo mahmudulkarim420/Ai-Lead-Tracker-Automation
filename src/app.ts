@@ -1,94 +1,42 @@
-
 import express, { type ErrorRequestHandler } from "express";
-import { z } from "zod";
-import { AiTimeoutError, analyzeLead } from "./services/lead-analyzer.js";
-import { apiRateLimiter, configureTrustProxy } from "./middleware/rate-limit.js";
 import { requestContext } from "./middleware/request-context.js";
 import { errorInfo, log } from "./lib/logger.js";
 
+// ---------------------------------------------------------------------------
+// Lead analysis now lives in the n8n workflow (Gemini → Google Sheets), so this
+// Express service no longer performs any AI work. It exposes a health probe and
+// keeps the shared request pipeline (request correlation, structured logging,
+// body-parser hardening, and a JSON-only error handler) that the deployment
+// relies on.
+// ---------------------------------------------------------------------------
 const app = express();
-
-// Apply the RATE_LIMIT_TRUST_PROXY setting *before* any request handling.
-// With the default (0) this is a no-op, preserving Express's secure default so
-// X-Forwarded-For is never trusted. Enable it only behind a known proxy.
-configureTrustProxy(app);
 
 // Correlate every request first: resolves/generates a request id, echoes it in
 // the X-Request-ID header, and emits a single structured completion log.
 app.use(requestContext);
 
+// Reject malformed or oversized JSON bodies with a safe 4xx before any route
+// runs. There is no current route that consumes a body; this stays as generic
+// request hardening for the HTTP surface.
 app.use(express.json({ limit: "10kb" }));
-
-const AnalyzeLeadRequestSchema = z.object({
-  message: z.string().trim().min(1).max(5000),
-});
 
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-app.post("/api/leads/analyze", apiRateLimiter, async (req, res) => {
-  const input = AnalyzeLeadRequestSchema.safeParse(req.body);
-
-  if (!input.success) {
-    res.status(400).json({
-      error: "Invalid request",
-      details: input.error.issues,
-    });
-    return;
-  }
-
-  try {
-    const lead = await analyzeLead(input.data.message);
-
-    res.status(200).json({
-      success: true,
-      data: lead,
-    });
-  } catch (error: unknown) {
-    // Structured, categorised logging. errorInfo() emits only name/message/
-    // category – never a stack trace or the raw thrown object – and the log
-    // line is correlated via the active request id.
-    // AiTimeoutError is provider-neutral and also covers OllamaTimeoutError,
-    // which extends it. The logger's only valid timeout category today is
-    // "ollama_timeout" (its ErrorCategory union has no neutral value), so it
-    // is retained to keep categorised timeout logging intact.
-    if (error instanceof AiTimeoutError) {
-      log().error(
-        { errorDetails: errorInfo(error, "ollama_timeout") },
-        "ai provider request timed out",
-      );
-      res.status(504).json({
-        error: "Lead analysis timed out",
-      });
-      return;
-    }
-
-    log().error(
-      { errorDetails: errorInfo(error, "upstream_failure") },
-      "lead analysis upstream failure",
-    );
-    res.status(502).json({
-      error: "Lead analysis failed",
-    });
-  }
-});
-
 // ---------------------------------------------------------------------------
 // Global error handler (must be registered LAST, after all routes).
 // ---------------------------------------------------------------------------
-// Safety net for errors raised by middleware that runs *before* the analyze
-// handler (most notably express.json() rejecting malformed or oversized
-// bodies) and for any error propagated with next(err).
+// Safety net for errors raised by middleware that runs before the routes (most
+// notably express.json() rejecting malformed or oversized bodies) and for any
+// error propagated with next(err).
 //
 // Guarantees:
 //   - responds with JSON only ({ error, [requestId] }) – never HTML, a stack
 //     trace, or internal error details;
 //   - logs the real error server-side via the request-scoped logger using
 //     errorInfo() (name/message/category only) so it stays correlatable;
-//   - echoes the request id when available;
-//   - leaves the existing inline 400 / 429 / 502 / 504 responses untouched:
-//     those are sent directly by the route/limiter and never call next(err).
+//   - echoes the request id when available.
 const globalErrorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (res.headersSent) {
     // A response is already on the wire; we can only defer to Express to
@@ -96,20 +44,25 @@ const globalErrorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
-  const info = errorInfo(err);
   const clientStatus = getClientErrorStatus(err);
 
   if (clientStatus !== undefined) {
     // A well-formed client error such as a parser 400 (bad JSON / body too
     // large). Log at warn – it is the caller's mistake, not a server fault.
-    log().warn({ errorDetails: info }, "client request error");
+    log().warn(
+      { errorDetails: errorInfo(err, "validation_error") },
+      "client request error",
+    );
     res.status(clientStatus).json({ error: "Invalid request" });
     return;
   }
 
   // Unexpected server error: log the category + safe details, return a generic
   // message. No name, message, or stack is ever sent to the client.
-  log().error({ errorDetails: info }, "unhandled request error");
+  log().error(
+    { errorDetails: errorInfo(err) },
+    "unhandled request error",
+  );
   const requestId = res.getHeader("X-Request-ID");
   res.status(500).json({
     error: "Internal server error",
